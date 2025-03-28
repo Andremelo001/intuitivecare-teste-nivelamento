@@ -2,10 +2,10 @@ import os
 from typing import Dict
 
 from src.web_scraping.data.interfaces.interface_compress_files_repository import InterfaceCompressFilesRepository
-from src.web_scraping.domain.interfaces.interface_compress_files import InterfaceCompressFilesRepository
+from src.web_scraping.domain.interfaces.interface_compress_files import InterfaceCompressFiles
 
 
-class CompressFilesUseCase(InterfaceCompressFilesRepository):
+class CompressFilesUseCase(InterfaceCompressFiles):
     def __init__(self, repository: InterfaceCompressFilesRepository):
         self.repository = repository
     
