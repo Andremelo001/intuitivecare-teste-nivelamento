@@ -1,5 +1,6 @@
 import os
 from typing import Dict
+from pathlib import Path
 
 from src.web_scraping.data.interfaces.interface_compress_files_repository import InterfaceCompressFilesRepository
 from src.web_scraping.domain.interfaces.interface_compress_files import InterfaceCompressFiles
@@ -12,6 +13,11 @@ class CompressFilesUseCase(InterfaceCompressFiles):
     def compress_files_zip(self, diretorio_destino: str, nome_zip: str, diretorio_origem: str) -> Dict:
 
         self.__diretorio_exists(diretorio_destino)
+
+        status_files = self.__verificar_arquivos(diretorio_destino)
+
+        if any(status['status'] == 'presente' for status in status_files.values()):
+            return {"message": "Arquivo já presente no diretório"}
 
         zip_exists = self.__zip_exists(diretorio_destino, nome_zip)
 
@@ -46,6 +52,25 @@ class CompressFilesUseCase(InterfaceCompressFiles):
     def __diretorio_exists(cls, diretorio_destino: str) -> None:
         # Criando a pasta de destino caso não exista
         os.makedirs(diretorio_destino, exist_ok=True)
+
+    @classmethod
+    def __verificar_arquivos(cls, diretorio_destino: str) -> Dict:
+        """Verifica se os arquivos já existem no diretório"""
+        arquivos = {
+            'anexo_i': Path(diretorio_destino) / "Anexo_I.pdf",
+            'anexo_ii': Path(diretorio_destino) / "Anexo_II.pdf"
+        }
+
+        arquivos_encontrados = {
+            chave: {
+                'status': 'presente',
+                'caminho': str(arquivo.resolve()),
+                'tamanho': arquivo.stat().st_size
+            }
+            for chave, arquivo in arquivos.items() if arquivo.exists()
+        }
+
+        return arquivos_encontrados
 
 
     
