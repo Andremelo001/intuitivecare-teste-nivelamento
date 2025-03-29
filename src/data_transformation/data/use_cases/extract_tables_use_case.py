@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import List, Dict, Optional
 from src.data_transformation.data.interfaces.interface_extract_tables_repository import InterfacePdfRepository
 from src.data_transformation.domain.interfaces.interface_extract_tables_use_case import InterfaceExtractTablesUseCase
@@ -6,7 +7,7 @@ class ExtractTablesUseCase(InterfaceExtractTablesUseCase):
     def __init__(self, repository: InterfacePdfRepository, default_value: str = "N/A"):
         """
         Args:
-            repository: Repositório para extração de tabelas
+            repository: Repositório para extração e conversão de tabelas
             default_value: Valor padrão para substituir nulos/vazios (default: "N/A")
         """
         self.repository = repository
@@ -16,75 +17,105 @@ class ExtractTablesUseCase(InterfaceExtractTablesUseCase):
             "AMB": "Seg. Ambulatorial"
         }
 
-    def extract_tables(self, pdf_path: str) -> List[Dict]:
-        raw_data = self.repository.extract(pdf_path)
-        formatted_data = []
-        
-        for row in raw_data:
-            formatted_row = {}
-            for key, value in row.items():
-                formatted_key = self.__format_header(key)
-                formatted_value = self.__format_value(value)
-                
-                # Aplica substituição de abreviações para valores nas colunas específicas
-                formatted_value = self.__replace_abbreviations(formatted_key, formatted_value)
-                
-                formatted_row[formatted_key] = formatted_value
-            
-            formatted_data.append(formatted_row)
-        
-        return formatted_data
-
-    def __replace_abbreviations(self, column_name: str, value: str) -> str:
+    def extract_tables(self, pdf_path: str, output_path: str) -> str:
         """
-        Substitui abreviações pelas descrições completas em colunas específicas.
+        Extrai tabelas do PDF, aplica transformações e salva em CSV
         
         Args:
-            column_name: Nome da coluna sendo processada
-            value: Valor atual da célula
+            pdf_path: Caminho do arquivo PDF de entrada
+            output_path: Caminho para o arquivo CSV de saída
             
         Returns:
-            Valor com abreviações substituídas quando aplicável
+            Caminho completo do arquivo CSV gerado
         """
-        # Verifica se é uma coluna que pode conter abreviações
-        if column_name in ["OD", "AMB"]:
-            # Se o valor for exatamente a abreviação, substitui
+        try:
+            self._diretorio_exists(output_path)
+
+            status_file = self._verificar_arquivos(output_path)
+
+            if status_file['procedimentos']['status'] == 'presente':
+                return {"message": "Arquivo já presente no diretório"}
+
+            # Extrai dados brutos do PDF
+            raw_data = self.repository.extract(pdf_path)  # Arquivo temporário
+            
+            # Processa e formata os dados
+            processed_data = self._process_raw_data(raw_data)
+            
+            # Salva os dados processados
+            return self.repository.save_to_csv(processed_data, output_path)
+            
+        except Exception as e:
+            raise RuntimeError(f"Falha ao processar PDF: {str(e)}")
+
+    def _process_raw_data(self, raw_data: List[Dict]) -> List[Dict]:
+        """Aplica todas as transformações nos dados brutos"""
+        processed_data = []
+        
+        for row in raw_data:
+            processed_row = {}
+            for key, value in row.items():
+                formatted_key = self._format_header(key)
+                formatted_value = self._format_value(value)
+                formatted_value = self._replace_abbreviations(formatted_key, formatted_value)
+                
+                processed_row[formatted_key] = formatted_value
+            
+            processed_data.append(processed_row)
+        
+        return processed_data
+
+    def _replace_abbreviations(self, column_name: str, value: str) -> str:
+        """Substitui abreviações conforme mapeamento"""
+        if column_name in self.abbreviation_map:
             if value in self.abbreviation_map:
                 return self.abbreviation_map[value]
-            # Se for uma lista separada por vírgulas, processa cada item
-            elif "," in value:
+            if "," in value:
                 parts = [part.strip() for part in value.split(",")]
-                replaced = [self.abbreviation_map.get(part, part) for part in parts]
-                return ", ".join(replaced)
-        
+                return ", ".join(self.abbreviation_map.get(part, part) for part in parts)
         return value
 
     @classmethod
-    def __format_header(cls, header: str) -> str:
-        """Formata os cabeçalhos da tabela"""
-        if header is None:
+    def _format_header(cls, header: str) -> str:
+        """Padroniza nomes de colunas"""
+        if not header:
             return "COLUNA_DESCONHECIDA"
             
-        formatted = header.replace('\n', ' ').strip()
-        formatted = formatted.replace('"', '')
-        formatted = ' '.join(formatted.split()).upper()
-        formatted = formatted.replace('Í', 'I').replace('Ã', 'A').replace('Ç', 'C')
-        formatted = formatted.replace(',', ';')
-        return formatted
+        return (header
+                .replace('\n', ' ')
+                .replace('"', '')
+                .upper()
+                .translate(str.maketrans('ÍÃÇ', 'IAC'))
+                .replace(',', ';'))
 
-    def __format_value(self, value: Optional[str]) -> str:
-        """Formata os valores das células da tabela"""
-        # Verifica se o valor é nulo ou string vazia
-        if value is None or (isinstance(value, str) and not value.strip()):
+    def _format_value(self, value: Optional[str]) -> str:
+        """Padroniza valores das células"""
+        if not value or not str(value).strip():
             return self.default_value
             
-        # Remove quebras de linha e espaços extras
-        formatted = str(value).replace('\n', ' ').strip()
-        
-        # Remove aspas duplas se existirem
-        formatted = formatted.replace('"', '')
-        
-        # Remove espaços duplicados
-        formatted = ' '.join(formatted.split())
-        
-        return formatted
+        return ' '.join(str(value)
+                        .replace('\n', ' ')
+                        .replace('"', '')
+                        .split())
+    
+    @classmethod
+    def _diretorio_exists(cls, output_path: str) -> None:
+        """Verifica se o diretório existe e cria se necessário"""
+        Path(output_path).mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def _verificar_arquivos(cls, output_path: str) -> Dict:
+        """Verifica se os arquivos já existem no diretório"""
+        arquivos = {
+            'procedimentos': Path(output_path) / "procedimentos.csv",
+        }
+
+        arquivos_encontrados = {
+            chave: {
+                'status': 'presente' if arquivo.exists() else 'ausente',
+                'caminho': str(arquivo.resolve()),
+            }
+            for chave, arquivo in arquivos.items()
+        }
+
+        return arquivos_encontrados

@@ -1,76 +1,65 @@
-import requests
-from bs4 import BeautifulSoup
 import os
 from typing import Dict
 from src.web_scraping.data.interfaces.interface_download_pdfs_repository import InterfaceDownloadPdfsRepository
+from src.web_scraping.infra.drivers.requests_driver import RequestsDriver
+from src.web_scraping.infra.drivers.beautifulsoup_driver import BeautifulSoupDriver
 
 class DownloadPdfsRepository(InterfaceDownloadPdfsRepository):
-    @classmethod
-    def download_pdfs(cls, url: str, diretorio_destino: str, headers: str) -> Dict:
-        """ Baixa os Anexos I e II da página da ANS
-        
-        Args:
-            url: URL da página principal
-            diretorio_destino: Pasta onde os arquivos serão salvos
-            headers: Cabeçalhos HTTP
-            
-        Returns:
-            Dicionário com status e mensagem"""
-        try:
-            resposta = requests.get(url, headers=headers)
-            resposta.raise_for_status()
-            
-            soup = BeautifulSoup(resposta.text, 'html.parser')
+    def __init__(self):
+        self.http_driver = RequestsDriver()
+        self.html_parser = BeautifulSoupDriver()
 
-            # Lista de anexos a baixar
-            anexos_para_baixar = {
+    def download_pdfs(self, url: str, diretorio_destino: str, headers: str) -> Dict:
+        try:
+            # 1. Requisição HTTP
+            response = self.http_driver.get(url, headers)
+            self.http_driver.validate_response(response)
+            
+            # 2. Parse HTML
+            soup = self.html_parser.parse(response.text)
+            
+            # 3. Download dos PDFs
+            anexos = {
                 'Anexo I': 'Anexo_I.pdf',
                 'Anexo II': 'Anexo_II.pdf'
             }
             
             resultados = {}
             
-            for anexo_nome, arquivo_nome in anexos_para_baixar.items():
-                link_pdf = soup.find('a', string=lambda text: text and anexo_nome.lower() in text.lower())
-
-                if link_pdf and 'href' in link_pdf.attrs:
-                    href = link_pdf['href']
+            for anexo_nome, arquivo_nome in anexos.items():
+                link = self.html_parser.find_link(soup, anexo_nome)
+                
+                if not link:
+                    resultados[anexo_nome] = {'status': 'erro', 'mensagem': f'Link não encontrado'}
+                    continue
                     
-                    # Resolve URL completa
-                    pdf_url = href if href.startswith('http') else f"{url.rsplit('/', 1)[0]}/{href.lstrip('/')}"
-                    
-                    caminho_completo = os.path.join(diretorio_destino, arquivo_nome)
-                    
-                    try:
-                        # Baixa o PDF
-                        resposta_pdf = requests.get(pdf_url, headers=headers, stream=True)
-                        resposta_pdf.raise_for_status()
-                        
-                        with open(caminho_completo, 'wb') as arquivo:
-                            for chunk in resposta_pdf.iter_content(chunk_size=8192):
-                                arquivo.write(chunk)
-                        
-                        resultados[anexo_nome] = {
-                            'status': 'sucesso',
-                            'caminho': caminho_completo,
-                            'tamanho': os.path.getsize(caminho_completo)
-                        }
-                        
-                    except Exception as e:
-                        resultados[anexo_nome] = {
-                            'status': 'erro',
-                            'mensagem': str(e)
-                        }
-                else:
-                    resultados[anexo_nome] = {
-                        'status': 'erro',
-                        'mensagem': f'Link para {anexo_nome} não encontrado na página'
-                    }
-
+                pdf_url = self._resolve_url(url, link['href'])
+                
+                caminho = os.path.join(diretorio_destino, arquivo_nome)
+                
+                resultados[anexo_nome] = self._download_pdf(pdf_url, caminho, headers)
+            
             return resultados
-        
+            
         except Exception as e:
+            return {'status': 'erro', 'mensagem': str(e)}
+
+    def _resolve_url(self, base_url: str, href: str) -> str:
+        return href if href.startswith('http') else f"{base_url.rsplit('/', 1)[0]}/{href.lstrip('/')}"
+
+    def _download_pdf(self, url: str, caminho: str, headers: Dict[str, str]) -> Dict:
+        try:
+            response = self.http_driver.get(url, headers)
+            self.http_driver.validate_response(response)
+            
+            with open(caminho, 'wb') as arquivo:
+                for chunk in response.iter_content(chunk_size=8192):
+                    arquivo.write(chunk)
+            
             return {
-                'status': 'erro',
-                'mensagem': str(e)
+                'status': 'sucesso',
+                'caminho': caminho,
+                'tamanho': os.path.getsize(caminho)
             }
+        except Exception as e:
+            return {'status': 'erro', 'mensagem': str(e)}
