@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import List, Dict, Optional
+import os
 from src.data_transformation.data.interfaces.interface_extract_tables_repository import InterfacePdfRepository
 from src.data_transformation.domain.interfaces.interface_extract_tables_use_case import InterfaceExtractTablesUseCase
 
@@ -18,35 +19,32 @@ class ExtractTablesUseCase(InterfaceExtractTablesUseCase):
         }
 
     def extract_tables(self, pdf_path: str, output_path: str) -> str:
-        """
-        Extrai tabelas do PDF, aplica transformações e salva em CSV
+        # Garantir que o output_path termina com .csv
+        if not output_path.lower().endswith('.csv'):
+            output_path = os.path.join(output_path, 'output.csv') if os.path.isdir(output_path) else output_path + '.csv'
         
-        Args:
-            pdf_path: Caminho do arquivo PDF de entrada
-            output_path: Caminho para o arquivo CSV de saída
-            
-        Returns:
-            Caminho completo do arquivo CSV gerado
-        """
-        try:
-            self._diretorio_exists(output_path)
+        output_path = str(Path(output_path).resolve())
 
-            status_file = self._verificar_arquivos(output_path)
+        self.__file_csv_path_exists(output_path)
 
-            if status_file['procedimentos']['status'] == 'presente':
-                return {"message": "Arquivo já presente no diretório"}
-
-            # Extrai dados brutos do PDF
-            raw_data = self.repository.extract(pdf_path)  # Arquivo temporário
+        self.__file_pdf_path_exists(pdf_path)
+        
+        # Garante que o caminho de saída é absoluto e normalizado
+        output_path = str(Path(output_path).resolve())
+        
+        # Verifica/Cria o diretório de saída
+        output_dir = os.path.dirname(output_path)
+        if output_dir:  # Se não for diretório vazio
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+        
+        # Extrai dados brutos do PDF
+        raw_data = self.repository.extract(pdf_path)
             
-            # Processa e formata os dados
-            processed_data = self._process_raw_data(raw_data)
+        # Processa e formata os dados
+        processed_data = self._process_raw_data(raw_data)
             
-            # Salva os dados processados
-            return self.repository.save_to_csv(processed_data, output_path)
-            
-        except Exception as e:
-            raise RuntimeError(f"Falha ao processar PDF: {str(e)}")
+        # Salva os dados processados
+        return self.repository.save_to_csv(processed_data, output_path)
 
     def _process_raw_data(self, raw_data: List[Dict]) -> List[Dict]:
         """Aplica todas as transformações nos dados brutos"""
@@ -119,3 +117,26 @@ class ExtractTablesUseCase(InterfaceExtractTablesUseCase):
         }
 
         return arquivos_encontrados
+    
+    @classmethod
+    def __file_pdf_path_exists(cls, pdf_path: str) -> None:
+        """
+        Verifica se um arquivo existe no caminho especificado.
+        
+        Parâmetros:
+            pdf_path (str): O caminho completo para o arquivo a ser verificado.
+        """
+        if not os.path.isfile(pdf_path):
+            raise Exception("pdf não existe")
+        
+
+    @classmethod
+    def __file_csv_path_exists(cls, output_path: str) -> None:
+        """
+        Verifica se um arquivo existe no caminho especificado.
+        
+        Parâmetros:
+            pdf_path (str): O caminho completo para o arquivo a ser verificado.
+        """
+        if os.path.isfile(output_path):
+            raise Exception("Csv já existe no diretorio")
